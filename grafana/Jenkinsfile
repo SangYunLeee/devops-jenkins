@@ -1,0 +1,66 @@
+pipeline {
+  agent any
+
+  environment {
+    DOCKERHUB_CRED = credentials('DockerHub-sororiri')
+    GIT_CRED = credentials('GitHub-sororiri')
+    ARGOCD_CRED = credentials('ArgoCD-admin')
+
+    // 자격 증명 정보
+    GIT_CREDENTIALS_ID = 'github-sororiri'
+
+    // 코드 저장소 정보
+    GIT_CODE_REPO = 'https://github.com/SangYunLeee/devops-image.git'
+    GIT_CODE_BRANCH = 'main'
+
+    // Docker 이미지 정보
+    DOCKER_IMAGE = 'sororiri/grafana'
+    DOCKERFILE_PATH = 'prometheus-grafana-stack/grafana'
+    DOCKERFILE_NAME = 'Dockerfile'
+
+    // Manifest 저장소 정보
+    GIT_MANIFEST_REPO_BODY = 'github.com/SangYunLeee/devops-manifest.git'
+    GIT_MANIFEST_BRANCH = 'main'
+    GIT_MANIFEST_FOLDER = 'prometheus-grafana-stack'
+    GIT_MANIFEST_FILE = 'values.yaml'
+    GIT_MANIFEST_TAG_KEY = 'grafana.image.tag'
+
+    GIT_MANIFEST_REPO_PROTOCOL = 'https'
+    GIT_MANIFEST_REPO = "${GIT_MANIFEST_REPO_PROTOCOL}://${GIT_MANIFEST_REPO_BODY}"
+  }
+
+  stages {
+    stage('Clone GIT Repository') {
+      steps {
+        git branch: "${GIT_CODE_BRANCH}", credentialsId: "${GIT_CREDENTIALS_ID}", url: "${GIT_CODE_REPO}"
+      }
+    }
+
+    stage('Build and Push Docker Image') {
+      steps {
+        sh '''
+          echo $DOCKERHUB_CRED_PSW | docker login -u $DOCKERHUB_CRED_USR --password-stdin
+          cd ${DOCKERFILE_PATH}
+          docker build -f ${DOCKERFILE_NAME} -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+          docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+          rm -rf ./*
+        '''
+      }
+    }
+
+    stage('Clone K8S YAML Repository and Update Image Tag') {
+      steps {
+        git branch: "${GIT_MANIFEST_BRANCH}", credentialsId: "${GIT_CREDENTIALS_ID}", url: "${GIT_MANIFEST_REPO}"
+        sh '''
+          cd ${GIT_MANIFEST_FOLDER}
+          yq e ".${GIT_MANIFEST_TAG_KEY} = \"$BUILD_NUMBER\"" -i ${GIT_MANIFEST_FILE}
+          git config user.email "jenkins@example.com"
+          git config user.name "Jenkins"
+          git add .
+          git commit -m "fix: IMAGE TAG 수정.  TAG 명: $BUILD_NUMBER"
+          git push https://${GIT_CRED_USR}:${GIT_CRED_PSW}@${GIT_MANIFEST_REPO_BODY} $GIT_MANIFEST_BRANCH
+        '''
+      }
+    }
+  }
+}
